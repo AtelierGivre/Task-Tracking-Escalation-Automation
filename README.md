@@ -1,19 +1,18 @@
 # Task Tracking & Escalation Automation
 
-A Google Sheets + Google Apps Script prototype for recurring task tracking, completion logging, correction history, manager notifications, and leadership escalation.
+A self-contained Google Sheets + Google Apps Script prototype for recurring task tracking, interactive employee submissions, completion logging, correction history, manager notifications, and leadership escalation.
 
-## What it demonstrates
+## What It Demonstrates
 
-- Records task completion against a task ID and assigned employee name.
-- Validates required ticket proof for tasks marked as requiring a ticket.
-- Uses a script lock to reduce collisions when multiple submissions update the spreadsheet.
-- Creates a completion-log entry and calculates the next due date from the configured recurrence interval.
-- Allows up to two corrections to the latest completion before the next due date, while preserving correction history.
-- Sends manager alerts for tasks already marked `Overdue`.
-- Supports manager acknowledgement from the `Manager Dashboard` sheet.
-- Escalates unresolved manager alerts after a proposed four-hour prototype interval.
+* **One-Click Workbook Provisioning:** Automatically creates all 7 required tabs, headers, data validations, checkboxes, and live `FILTER`/`VLOOKUP` formulas via `setupAutomation()`.
+* **Custom Spreadsheet Menu (`Allo Ops`):** Provides direct UI controls to repair sheets, install triggers, run manual checks, reset demo data, and execute automated tests.
+* **Interactive Employee Submissions (`Employee View`):** Employees enter a ticket ID or check the completion box directly in the sheet to log work and advance the recurring due date.
+* **Ticket Proof & Deduplication:** Validates required ticket IDs for portal tasks, prevents duplicate cycle completions, and uses `LockService` to prevent concurrent edit collisions.
+* **Correction Tracking:** Allows up to 2 proof corrections per cycle while preserving full audit trails in `Correction History`.
+* **Automated Escalation Pipeline:** Emails the manager once a task passes the configured `DUE_HOUR` (default 18:00), supports dropdown acknowledgements in the `Manager` tab, and escalates unresolved alerts to leadership after `ESCALATION_HOURS` (default 4 hours).
+* **Built-In Test Suite:** Runs 8 end-to-end scenarios (`runAllTests()`) and outputs `PASS`/`FAIL` diagnostics to the `Test Log` tab.
 
-## Repository structure
+## Repository Structure
 
 ```text
 task-tracking-escalation-automation/
@@ -21,108 +20,46 @@ task-tracking-escalation-automation/
 ├── README.md
 └── .gitignore
 ```
-
 ## Technology
 
-- Google Sheets — workbook, task data, logs, dashboards, and alert status
-- Google Apps Script — workflow automation and scheduled functions
-- JavaScript — business logic
-- Apps Script services — `SpreadsheetApp`, `LockService`, `MailApp`, and `PropertiesService`
+* **Google Sheets** — Workbook storage, dynamic views, data validation, and interactive checkboxes
+* **Google Apps Script** — Workflow automation, installable `onEdit` triggers, and hourly time-driven jobs
+* **Apps Script Services** — `SpreadsheetApp`, `LockService`, `MailApp`, `ScriptApp`, and `Utilities`
 
-## Workbook requirements
+## Workbook Architecture
 
-The script expects these sheet names:
+You do **not** need to build the sheets manually. Running **Allo Ops → Set up / repair sheets** automatically creates and formats all seven tabs:
 
-- `Tasks`
-- `Completion Log`
-- `Correction History`
-- `Manager Alerts`
-- `Manager Dashboard`
+| Sheet Name | Purpose & Key Columns |
+| :--- | :--- |
+| **`Tasks`** | Master schedule (`Task ID`, `Task Name`, `Assigned Employee`, `Frequency (Days)`, `Task Type`, `Requires Ticket ID`, `Last Completed`, `Next Due`, `Status`). |
+| **`Employee View`** | Live employee workspace synced via `FILTER` from `Tasks`, featuring `Last Proof`, `Enter Ticket ID / Update` (Col G), and `Mark Complete` checkboxes (Col H). |
+| **`Manager`** | Live manager dashboard synced via `FILTER` from `Tasks`, featuring a `Manager Acknowledgement` dropdown (Col F). |
+| **`Completion Log`** | Immutable audit log of completed task cycles, timestamps, submitted proof, cycle due dates, and correction counts. |
+| **`Correction History`** | Audit trail recording original vs. replacement proof whenever an employee updates a completed cycle. |
+| **`Manager Alerts`** | Tracks overdue alert timestamps, status (`Sent`, `Acknowledged`, `Resolved`), escalation status, and escalation timestamps. |
+| **`Test Log`** | Stores `PASS`/`FAIL` outputs from the 8 automated test scenarios. |
+## Setup Instructions
 
-The code reads/writes these minimum column positions. Keep the workbook's actual headers aligned with these positions before using the script.
+1. Create a new Google Spreadsheet.
+2. Open **Extensions → Apps Script**.
+3. Paste the contents of `Code.gs` into the script editor.
+4. Update the configuration constants at the top of `Code.gs`:
+   * `MANAGER_EMAIL` — Recipient email for overdue alerts
+   * `LEADERSHIP_EMAIL` — Recipient email for SLA escalations
+   * `ESCALATION_HOURS` — Hours before an uncompleted alert escalates (default: `4`)
+   * `DUE_HOUR` — Hour of the day (24h format) when a due task becomes overdue (default: `18`)
+   * `SEND_EMAILS` — Set to `true` to send live emails or `false` for dry-run logging
+5. Save the project and reload the Google Spreadsheet.
+6. In the spreadsheet menu bar, click **Allo Ops → Set up / repair sheets** and authorize the requested Google permissions.
+7. *(Optional)* Click **Allo Ops → Reset demo data** to populate 5 sample tasks, then click **Allo Ops → Run all tests** to verify the installation.
 
-### Tasks
+## Important Implementation Notes
 
-| Column | Expected data |
-|---|---|
-| A | Task ID |
-| B | Task name |
-| C | Assigned employee |
-| D | Recurrence interval in days |
-| F | Ticket required (`Yes`/other) |
-| G | Last completed date |
-| H | Due date |
-| I | Status (`Pending`/`Overdue`, etc.) |
+* **Installable Triggers Required:** Because `handleEdit` sends toast notifications and modifies multiple tabs, triggers must be installed via **Allo Ops → Install hourly trigger** (which registers both the hourly `runAutomation` job and the installable `handleEdit` trigger).
+* **Cycle Deduplication:** Alerts and completions are deduplicated per task cycle using a composite key (`Task ID | yyyy-MM-dd`). Completing a task automatically marks any open alert for that cycle as `Resolved` and clears the manager acknowledgement dropdown.
+* **Prototype Scope:** Employee matching relies on sheet row context rather than authenticated Google user identity. Before deploying in production, add `Session.getActiveUser().getEmail()` verification, sheet protection rules, and external secret management.
 
-Column E is read only indirectly through the row width and is not interpreted by the current completion logic.
+## Safety and Privacy
 
-### Completion Log
-
-| Column | Expected data |
-|---|---|
-| A | Task ID |
-| B | Task name |
-| C | Employee |
-| D | Completion timestamp |
-| E | Proof / ticket reference |
-| F | Acknowledgement field |
-| G | Previous due date |
-| H | Correction count |
-
-### Correction History
-
-| Column | Expected data |
-|---|---|
-| A | Task ID |
-| B | Task name |
-| C | Employee |
-| D | Original completion timestamp |
-| E | Previous proof |
-| F | Correction timestamp |
-| G | Replacement proof |
-
-### Manager Alerts
-
-The current code uses columns A, E, F, G, and H for task ID, alert timestamp, alert status, escalation status, and acknowledgement timestamp respectively. Confirm the remaining columns against your workbook.
-
-### Manager Dashboard
-
-The `onEdit(e)` handler expects task ID in column A and the manager acknowledgement dropdown in column F. It writes the acknowledgement status and timestamp back to `Manager Alerts`.
-
-## Setup
-
-1. Open the target Google Spreadsheet.
-2. Select **Extensions → Apps Script**.
-3. Replace or add the script source using `Code.gs`.
-4. Save the Apps Script project.
-5. In Apps Script, open **Project Settings → Script properties**.
-6. Add a property:
-   - Property: `MANAGER_EMAIL`
-   - Value: the intended manager/leadership email address
-7. Review the sheet names, column positions, sample data, and formulas.
-8. Run `testConnection()` and authorize the requested Google permissions.
-9. Configure time-driven triggers for:
-   - `sendManagerOverdueAlerts`
-   - `sendLeadershipEscalations`
-10. Test on a duplicate workbook with dummy data before using any real operational data.
-
-## Important implementation notes
-
-- The employee check compares the submitted employee name with the assigned employee name in the sheet. It is a data validation check, **not identity authentication**.
-- Proof is stored as submitted text. The script does not independently verify that a WhatsApp message was sent or that an external ticket exists.
-- The four-hour escalation interval is a prototype rule in the code, not a confirmed organisational SLA.
-- Manager acknowledgement is driven by a dropdown edit in the dashboard; it is not automatically inferred from email replies.
-- `sendManagerOverdueAlerts()` only sends an alert when the task status is already `Overdue` and a matching row exists in `Manager Alerts`.
-- The included validation functions use sample task IDs and employee names. Update those values to match a dedicated test workbook before running them.
-- `testManagerEmail()` sends a real email to the configured `MANAGER_EMAIL`. Run it only when you intend to send a test message.
-- Time-driven triggers and email sending require Apps Script authorization and may be subject to Google quotas.
-
-## Safety and privacy
-
-Do not commit real employee names, email addresses, ticket IDs, task records, spreadsheet links with private access, or operational data. Use a sanitised workbook with fictional sample records for demonstrations. The recipient email is read from Script Properties rather than stored in the repository.
-
-## Current scope and limitations
-
-This repository documents and shares the Apps Script prototype. It does not include the original Google Sheet's private data, formulas, dashboard formatting, or trigger configuration. Those must be recreated or shared separately using a sanitised demonstration workbook.
-
-The prototype should not be described as production-ready without additional work such as stronger identity/access controls, role-based permissions, robust error/retry handling, idempotency safeguards, and end-to-end testing of every escalation path.
+Do not commit real employee names, personal email addresses, internal ticket IDs, or private spreadsheet URLs to version control. Always replace `MANAGER_EMAIL` with a placeholder before pushing to GitHub.
